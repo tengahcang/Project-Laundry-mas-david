@@ -1,11 +1,18 @@
 #include "timer_manager.h"
 #include "config.h"
 
+// Variabel untuk mencatat data terakhir yang sukses disimpan ke memori
+// String lastSavedString = "";
+
+// Tambahkan variabel global di timer_manager.cpp untuk mengingat status relay terakhir
+byte lastRelayStates[3] = {0, 0, 0};
 
 void timerTask(void *pvParameters) {
     for (;;) {
         bool adaPerubahan = false;
+        String currentActionStr = "";
 
+        // 1. Hitung mundur dan rakit string kondisi saat ini
         for (int i = 0; i < activeMachineCount; i++) {
             if (laundryRoom[i].isActive && laundryRoom[i].remainingTime > 0) {
                 laundryRoom[i].remainingTime--;
@@ -16,29 +23,27 @@ void timerTask(void *pvParameters) {
                     Serial.printf("⏹️ Mesin %d Selesai!\n", i + 1);
                 }
             }
+
+            // Hitung pembulatan ke atas untuk string
+            int menit = (laundryRoom[i].remainingTime + 59) / 60;
+            if (menit < 10) currentActionStr += "0";
+            currentActionStr += String(menit);
+            currentActionStr += ";";
         }
 
-        // Simpan ke Flash setiap 10 detik sekali saja agar Flash tidak cepat rusak (wear leveling)
-        static int saveCounter = 0;
-        if (adaPerubahan && ++saveCounter >= 10) { 
-            String dataToSave = "";
-            
-            // Rakit string format "09;00;00;..."
-            for (int i = 0; i < activeMachineCount; i++) {
-                int menit = (laundryRoom[i].remainingTime + 59) / 60; // Simpan dalam menit agar rapi
-                if (menit < 10) dataToSave += "0"; // Padding nol didepan (optional)
-                dataToSave += String(menit);
-                dataToSave += ";";
-            }
-
+        // 2. LOGIKA OPSI 4: Bandingkan data saat ini dengan data terakhir di Flash
+        // Kita cek setiap 1 detik, tapi HANYA menulis jika string-nya berubah (ganti menit)
+        if (currentActionStr != lastSavedString) {
             pref.begin("laundry", false);
-            pref.putString("actionStr", dataToSave); // Simpan sebagai SATU string
+            pref.putString("actionStr", currentActionStr);
             pref.end();
-            
-            saveCounter = 0;
-            Serial.print("💾 Flash Saved: ");
-            Serial.println(dataToSave);
+
+            lastSavedString = currentActionStr; // Update catatan terakhir
+            Serial.print("💾 Flash Updated (Minute Change): ");
+            Serial.println(currentActionStr);
         }
+
+        updateRelays();
 
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
@@ -47,10 +52,13 @@ void timerTask(void *pvParameters) {
 // Fungsi untuk ambil data lama saat baru nyala
 void loadSavedTimes() {
     pref.begin("laundry", true);
-    String savedData = pref.getString("actionStr", ""); // Ambil string actionStr
+    String savedData = pref.getString("actionStr", ""); 
     pref.end();
 
     if (savedData != "") {
+        // --- TAMBAHKAN BARIS INI ---
+        lastSavedString = savedData; 
+        // ---------------------------
         Serial.println("📂 Recovery Data: " + savedData);
         
         int count = 0;
@@ -84,4 +92,56 @@ void startTimerTask() {
         NULL,
         0
     );
+}
+
+void updateRelays() {
+    byte currentRelayStates[3] = {0, 0, 0};
+
+    // 1. Tentukan status yang SEHARUSNYA sekarang berdasarkan data mesin
+    for (int i = 0; i < activeMachineCount; i++) {
+        if (laundryRoom[i].isActive) {
+            int byteIdx = i / 8; 
+            int bitIdx = i % 8;  
+            bitSet(currentRelayStates[byteIdx], bitIdx);
+        }
+    }
+
+    // 2. Bandingkan: Apakah ada perubahan dibanding status terakhir?
+    bool adaPerubahanStatus = false;
+    for (int j = 0; j < numShiftRegisters; j++) {
+        if (currentRelayStates[j] != lastRelayStates[j]) {
+            adaPerubahanStatus = true;
+            break;
+        }
+    }
+
+    // 3. Jika ada perubahan (misal: mesin baru nyala atau baru mati)
+    if (adaPerubahanStatus) {
+        Serial.println("⚡ Perubahan status terdeteksi, mengirim pulse ke Relay...");
+
+        // --- KIRIM PULSE ON/OFF ---
+        digitalWrite(SHIFT_LATCH_PIN, LOW);
+        for (int i = numShiftRegisters - 1; i >= 0; i--) {
+            shiftOut(SHIFT_DATA_PIN, SHIFT_CLOCK_PIN, MSBFIRST, currentRelayStates[i]);
+        }
+        digitalWrite(SHIFT_LATCH_PIN, HIGH);
+
+        // Tunggu 50ms sesuai instruksi Mas David agar mekanik relay berpindah
+        delay(50); 
+
+        // --- MATIKAN ARUS COIL (Release) ---
+        // Kirim data 0 ke semua output agar coil tidak panas
+        digitalWrite(SHIFT_LATCH_PIN, LOW);
+        for (int i = numShiftRegisters - 1; i >= 0; i--) {
+            shiftOut(SHIFT_DATA_PIN, SHIFT_CLOCK_PIN, MSBFIRST, 0x00);
+        }
+        digitalWrite(SHIFT_LATCH_PIN, HIGH);
+
+        // Simpan status sekarang sebagai referensi berikutnya
+        for (int k = 0; k < 3; k++) {
+            lastRelayStates[k] = currentRelayStates[k];
+        }
+        
+        Serial.println("✅ Pulse selesai, coil diistirahatkan.");
+    }
 }

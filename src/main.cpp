@@ -24,6 +24,12 @@ void setup()
         Serial.println("❌ Server test gagal");
     
     Serial.println("🚀 SIAP LANJUT PROGRAM UTAMA");
+    pinMode(SHIFT_DATA_PIN, OUTPUT);
+    pinMode(SHIFT_CLOCK_PIN, OUTPUT);
+    pinMode(SHIFT_LATCH_PIN, OUTPUT);
+    pinMode(SHIFT_OE_PIN, OUTPUT);
+
+    digitalWrite(SHIFT_OE_PIN, LOW);
     loadSavedTimes();
     startTimerTask();
 

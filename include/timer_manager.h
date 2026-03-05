@@ -3,5 +3,6 @@
 
 void startTimerTask();
 void loadSavedTimes();
+void updateRelays(); // Tambahkan ini
 
 #endif

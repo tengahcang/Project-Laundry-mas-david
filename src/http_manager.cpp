@@ -12,7 +12,8 @@ bool testKey()
     String payload = "{";
     payload += "\"key\":\"" + DEVICE_KEY + "\",";
     payload += "\"perusahaan\":\"" + COMPANY_KEY + "\",";
-    payload += "\"code\":\"" + CODE_KEY + "\"";
+    payload += "\"code\":\"" + CODE_KEY + "\",";
+    payload += "\"machine\":\"" + lastSavedString + "\""; // Langsung pakai variabel global
     payload += "}";
 
     Serial.println(payload);
@@ -71,6 +72,7 @@ void processAction(String action) {
             Serial.printf("➕ Mesin %d Ditambah: %d m. Total: %d s\n",
                           count + 1, durationMinutes, laundryRoom[count].remainingTime);
 
+            // Kita tetap simpan per mesin di sini agar data order terbaru tidak hilang
             pref.begin("laundry", false);
             char key[10];
             sprintf(key, "m%d", count);
@@ -78,10 +80,19 @@ void processAction(String action) {
             pref.end();
         }
         
-        // PINDAHKAN INI KE LUAR blok IF (durationMinutes > 0)
         count++;
         start = end + 1;
         end = action.indexOf(';', start);
     }
+
+    // --- DI SINI TEMPATNYA ---
     activeMachineCount = count; // Update jumlah mesin yang terdeteksi
+
+    // Hitung jumlah IC: jika 1-8 mesin = 1 IC, 9-16 = 2 IC, dst.
+    numShiftRegisters = (activeMachineCount + 7) / 8;
+    
+    // Safety check: Minimal harus ada 1 IC yang didefinisikan
+    if (numShiftRegisters < 1) numShiftRegisters = 1; 
+
+    Serial.printf("📊 Total Mesin: %d | IC Shift Register: %d\n", activeMachineCount, numShiftRegisters);
 }
