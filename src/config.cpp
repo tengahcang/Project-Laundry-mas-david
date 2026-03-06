@@ -14,3 +14,5 @@ int activeMachineCount = 0;
 String lastSavedString = ""; // Fisik variabel global ada di sini
 
 int numShiftRegisters = 1; // Default awal 1
+
+bool isEthernetConnected = false;

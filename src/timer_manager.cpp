@@ -96,8 +96,9 @@ void startTimerTask() {
 
 void updateRelays() {
     byte currentRelayStates[3] = {0, 0, 0};
+    byte pulseData[3] = {0, 0, 0};
 
-    // 1. Tentukan status yang SEHARUSNYA sekarang berdasarkan data mesin
+    // 1. Tentukan status mesin yang SEHARUSNYA aktif
     for (int i = 0; i < activeMachineCount; i++) {
         if (laundryRoom[i].isActive) {
             int byteIdx = i / 8; 
@@ -106,42 +107,40 @@ void updateRelays() {
         }
     }
 
-    // 2. Bandingkan: Apakah ada perubahan dibanding status terakhir?
-    bool adaPerubahanStatus = false;
+    // 2. LOGIKA HANYA NYALA: Bandingkan status baru dengan status lama
+    bool adaYangPerluDinyalakan = false;
     for (int j = 0; j < numShiftRegisters; j++) {
-        if (currentRelayStates[j] != lastRelayStates[j]) {
-            adaPerubahanStatus = true;
-            break;
-        }
+        // Logika (A & ~B): Cari bit yang di status baru adalah 1, tapi di status lama adalah 0
+        pulseData[j] = currentRelayStates[j] & ~lastRelayStates[j]; 
+        
+        if (pulseData[j] > 0) adaYangPerluDinyalakan = true;
     }
 
-    // 3. Jika ada perubahan (misal: mesin baru nyala atau baru mati)
-    if (adaPerubahanStatus) {
-        Serial.println("⚡ Perubahan status terdeteksi, mengirim pulse ke Relay...");
+    // 3. Jika ada mesin yang baru saja aktif (pindah dari 0 ke 1)
+    if (adaYangPerluDinyalakan) {
+        Serial.println("⚡ Triggering pulse HANYA untuk mesin yang baru AKTIF...");
 
-        // --- KIRIM PULSE ON/OFF ---
         digitalWrite(SHIFT_LATCH_PIN, LOW);
         for (int i = numShiftRegisters - 1; i >= 0; i--) {
-            shiftOut(SHIFT_DATA_PIN, SHIFT_CLOCK_PIN, MSBFIRST, currentRelayStates[i]);
+            shiftOut(SHIFT_DATA_PIN, SHIFT_CLOCK_PIN, MSBFIRST, pulseData[i]);
         }
         digitalWrite(SHIFT_LATCH_PIN, HIGH);
 
-        // Tunggu 50ms sesuai instruksi Mas David agar mekanik relay berpindah
-        delay(50); 
+        delay(50); // Pulse 50ms sesuai instruksi Mas David
 
-        // --- MATIKAN ARUS COIL (Release) ---
-        // Kirim data 0 ke semua output agar coil tidak panas
+        // Matikan semua output (release coil)
         digitalWrite(SHIFT_LATCH_PIN, LOW);
         for (int i = numShiftRegisters - 1; i >= 0; i--) {
             shiftOut(SHIFT_DATA_PIN, SHIFT_CLOCK_PIN, MSBFIRST, 0x00);
         }
         digitalWrite(SHIFT_LATCH_PIN, HIGH);
-
-        // Simpan status sekarang sebagai referensi berikutnya
-        for (int k = 0; k < 3; k++) {
-            lastRelayStates[k] = currentRelayStates[k];
-        }
         
-        Serial.println("✅ Pulse selesai, coil diistirahatkan.");
+        Serial.println("✅ Trigger selesai.");
+    }
+    
+    // PENTING: Selalu update lastRelayStates agar sinkron dengan kondisi mesin saat ini
+    // meskipun kita tidak mengirimkan pulse saat mesin mati
+    for (int k = 0; k < 3; k++) {
+        lastRelayStates[k] = currentRelayStates[k];
     }
 }
